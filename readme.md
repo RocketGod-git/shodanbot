@@ -5,8 +5,6 @@ Certainly! Here's the full README.md:
 # ShodanBot
 A Discord bot to interact with the Shodan API, allowing users to fetch information about devices, services, and vulnerabilities.
 
-![ShodanBot Logo](assets/logo.png)
-
 ## Table of Contents
 
 - [Installation](#installation)
@@ -69,4 +67,6 @@ Pull requests are welcome! For major changes, please open an issue first to disc
 
 ## License
 
-[MIT](LICENSE)
+[LICENSE](LICENSE)
+
+![rocketgod_logo](https://github.com/RocketGod-git/shodanbot/assets/57732082/29bf407f-8930-485a-96c5-6cba762e884e)
