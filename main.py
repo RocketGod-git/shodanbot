@@ -218,47 +218,44 @@ def run_discord_bot(token, shodan_key):
     @client.tree.command(name="searchorg", description="Search Shodan by organization.")
     async def searchorg(interaction: discord.Interaction, organization: str):
         try:
+            # Acknowledge the interaction first (deferred response)
+            await interaction.response.defer(ephemeral=False)
+
             result = client.shodan.search(f"org:\"{organization}\"")
             matches = result.get('matches', [])
-            if matches:
-                # Gather meaningful data from the match
-                match = matches[0]
-                ip_str = match.get('ip_str', 'Unknown IP')
-                port = match.get('port', 'Unknown Port')
-                org = match.get('org', 'Unknown Organization')
-                location = match.get('location', {})
-                country_name = location.get('country_name', 'Unknown Country')
-                city = location.get('city', 'Unknown City')
-                data = match.get('data', 'No data available.')
 
-                reply = (f"**IP:** {ip_str}\n"
-                        f"**Port:** {port}\n"
-                        f"**Organization:** {org}\n"
-                        f"**Country:** {country_name}\n"
-                        f"**City:** {city}\n\n"
-                        f"**Data:**\n{data}")
+            if matches:
+                # Limit to the top 5 results
+                top_matches = matches[:5]
+                reply = "Top 5 Results:\n\n"
+
+                for match in top_matches:
+                    ip_str = match.get('ip_str', 'Unknown IP')
+                    port = match.get('port', 'Unknown Port')
+                    org = match.get('org', 'Unknown Organization')
+                    location = match.get('location', {})
+                    country_name = location.get('country_name', 'Unknown Country')
+                    city = location.get('city', 'Unknown City')
+                    data = match.get('data', 'No data available.')
+
+                    reply += (f"**IP:** {ip_str}\n"
+                            f"**Port:** {port}\n"
+                            f"**Organization:** {org}\n"
+                            f"**Country:** {country_name}\n"
+                            f"**City:** {city}\n\n"
+                            f"**Data:**\n{data}\n\n"
+                            f"{'-'*30}\n\n")  # Separator for clarity
+
+                await interaction.followup.send(reply, ephemeral=True)
 
             else:
-                reply = f"No results for organization: {organization}"
-
-            await client.send_split_messages(interaction, reply)
+                await interaction.followup.send(f"No results for organization: {organization}", ephemeral=True)
 
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await interaction.followup.send(f"Shodan API Error: {e}", ephemeral=True)
+
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await interaction.followup.send(f"Error: {e}", ephemeral=True)
 
     @client.tree.command(name="searchport", description="Search Shodan by port.")
     async def searchport(interaction: discord.Interaction, port: int):
