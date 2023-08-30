@@ -4,7 +4,6 @@ import discord
 from discord import Embed
 import shodan
 
-# Set up logging
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -97,8 +96,6 @@ def run_discord_bot(token, shodan_key):
     async def protocols(interaction: discord.Interaction):
         try:
             protocol_list = client.shodan.protocols()
-
-            # Formatting the protocols for better readability
             formatted_protocols = "\n".join([f"- {protocol}" for protocol in protocol_list])
 
             await client.send_split_messages(interaction, formatted_protocols)
@@ -120,21 +117,24 @@ def run_discord_bot(token, shodan_key):
                 except Exception as followup_error:
                     logger.error(f"Failed to send followup: {followup_error}")
 
-    @client.tree.command(name="search", description="Search Shodan.")
+    @client.tree.command(
+        name="search",
+        description="Advanced and basic Shodan queries. Use `/help search` for examples."
+    )
     async def search(interaction: discord.Interaction, query: str):
         try:
+            query = query.strip()  
             result = client.shodan.search(query)
             matches = result.get('matches', [])
 
             if matches:
-                # Compile a detailed report from the first few matches
                 reply = ""
-                for i, match in enumerate(matches[:5]):  # Displaying first 5 matches here
+                for i, match in enumerate(matches[:5]): 
                     ip = match.get('ip_str', 'Unknown IP')
                     port = match.get('port', 'Unknown Port')
                     org = match.get('org', 'Unknown Org')
                     location = match.get('location', {}).get('country', 'Unknown Country')
-                    data = match.get('data', 'No data available.').strip()  # Removing leading/trailing whitespace
+                    data = match.get('data', 'No data available.')
                     product = match.get('product', 'Unknown Product')
                     version = match.get('version', 'Unknown Version')
                     os = match.get('os', 'Unknown OS')
@@ -146,35 +146,30 @@ def run_discord_bot(token, shodan_key):
                     reply += f"Product: {product}, Version: {version}, OS: {os}\n"
                     reply += f"Data: {data}\n\n"
             else:
-                reply = "No matches found."
+                reply = "No matches found for the given query."
 
             await client.send_split_messages(interaction, reply)
 
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await interaction.response.send_message(
+                f"Shodan API Error: {e}\nEnsure your query follows the described syntax, both basic and advanced.", 
+                ephemeral=True
+            )
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await interaction.response.send_message(
+                f"General Error: {e}\nIf this persists, please check your bot's setup or contact support.", 
+                ephemeral=True
+            )
 
     @client.tree.command(name="searchcity", description="Search Shodan by city.")
     async def searchcity(interaction: discord.Interaction, city: str):
+        city = city.strip()  
+        
         try:
             result = client.shodan.search(f"city:\"{city}\"")
             matches = result.get('matches', [])
 
             if matches:
-                # Let's compile a detailed report from the first few matches (you can adjust the number as needed)
                 reply = ""
                 for i, match in enumerate(matches[:5]):  # Displaying first 5 matches here
                     ip = match.get('ip_str', 'Unknown IP')
@@ -195,7 +190,6 @@ def run_discord_bot(token, shodan_key):
             else:
                 reply = f"No results for city: {city}"
 
-            # Respond directly to the interaction
             await interaction.response.send_message(reply, ephemeral=False)
 
         except shodan.APIError as e:
@@ -218,14 +212,12 @@ def run_discord_bot(token, shodan_key):
     @client.tree.command(name="searchorg", description="Search Shodan by organization.")
     async def searchorg(interaction: discord.Interaction, organization: str):
         try:
-            # Acknowledge the interaction first (deferred response)
             await interaction.response.defer(ephemeral=False)
 
             result = client.shodan.search(f"org:\"{organization}\"")
             matches = result.get('matches', [])
 
             if matches:
-                # Limit to the top 5 results
                 top_matches = matches[:5]
                 reply = "Top 5 Results:\n\n"
 
@@ -244,7 +236,7 @@ def run_discord_bot(token, shodan_key):
                             f"**Country:** {country_name}\n"
                             f"**City:** {city}\n\n"
                             f"**Data:**\n{data}\n\n"
-                            f"{'-'*30}\n\n")  # Separator for clarity
+                            f"{'-'*30}\n\n")
 
                 await interaction.followup.send(reply, ephemeral=True)
 
@@ -264,7 +256,6 @@ def run_discord_bot(token, shodan_key):
             matches = result.get('matches', [])
             
             if matches:
-                # Create a list of strings with IP, Port, and Data for the top 5 matches
                 replies = [f"IP: {match['ip_str']} - Port: {port} - Data: {match.get('data', 'No data available.')}" for match in matches[:5]]
                 reply = "\n\n".join(replies)
             else:
@@ -288,33 +279,41 @@ def run_discord_bot(token, shodan_key):
                 except Exception as followup_error:
                     logger.error(f"Failed to send followup: {followup_error}")
 
-    @client.tree.command(name="searchcountry", description="Search Shodan by country.")
-    async def searchcountry(interaction: discord.Interaction, country: str):
+    @client.tree.command(name="searchcountry", description="Search Shodan by country using a 2-letter country code (e.g., 'US' for the United States).")
+    async def searchcountry(interaction: discord.Interaction, country_code: str):
         try:
-            result = client.shodan.search(f"country:\"{country}\"")
+            # Convert country code to uppercase to ensure case-insensitivity
+            country_code = country_code.upper()
+
+            # Ensure the country code is valid
+            if len(country_code) != 2:
+                await interaction.response.send_message("Please provide a valid 2-letter country code (e.g., 'US' for the United States).", ephemeral=True)
+                return
+
+            result = client.shodan.search(f"country:\"{country_code}\"")
             matches = result.get('matches', [])
+            
             if matches:
-                # Gather meaningful data from the match
-                match = matches[0]
-                ip_str = match.get('ip_str', 'Unknown IP')
-                port = match.get('port', 'Unknown Port')
-                org = match.get('org', 'Unknown Organization')
-                location = match.get('location', {})
-                country_name = location.get('country_name', 'Unknown Country')
-                city = location.get('city', 'Unknown City')
-                data = match.get('data', 'No data available.')
+                replies = []
+                for match in matches[:5]:
+                    ip = match.get('ip_str', 'Unknown IP')
+                    port = match.get('port', 'Unknown Port')
+                    org = match.get('org', 'N/A')
+                    city = match.get('location', {}).get('city', 'N/A')
+                    data = match.get('data', 'No data available.').strip()
+                    
+                    detailed_info = (f"**IP:** {ip}\n"
+                                    f"**Port:** {port}\n"
+                                    f"**Organization:** {org}\n"
+                                    f"**City:** {city}\n\n"
+                                    f"**Data:**\n{data}\n"
+                                    f"---")
+                    replies.append(detailed_info)
 
-                reply = (f"**IP:** {ip_str}\n"
-                        f"**Port:** {port}\n"
-                        f"**Organization:** {org}\n"
-                        f"**Country:** {country_name}\n"
-                        f"**City:** {city}\n\n"
-                        f"**Data:**\n{data}")
-
+                message = "\n".join(replies)
+                await client.send_split_messages(interaction, message)
             else:
-                reply = f"No results for country: {country}"
-
-            await client.send_split_messages(interaction, reply)
+                await interaction.followup.send(f"No results found for country code: {country_code}")
 
         except shodan.APIError as e:
             try:
@@ -337,23 +336,29 @@ def run_discord_bot(token, shodan_key):
     async def exploitsearch(interaction: discord.Interaction, term: str):
         try:
             exploit_search = client.shodan.exploits.search(term)
+            
             if 'matches' in exploit_search and exploit_search['matches']:
-                first_exploit = exploit_search['matches'][0]
+                top_exploits = exploit_search['matches'][:10]
+                replies = []
                 
-                # Extract meaningful data from the exploit result
-                description = first_exploit.get('description', 'No description available.')
-                source = first_exploit.get('source', 'Unknown source')
-                date = first_exploit.get('date', 'Unknown date')
-                exploit_type = first_exploit.get('type', 'Unknown type')
+                for exploit in top_exploits:
+                    description = exploit.get('description', 'No description available.').strip()
+                    source = exploit.get('source', 'Unknown source')
+                    date = exploit.get('date', 'Unknown date')
+                    exploit_type = exploit.get('type', 'Unknown type')
+                    
+                    detailed_info = (f"**Description:** {description}\n"
+                                    f"**Source:** {source}\n"
+                                    f"**Date:** {date}\n"
+                                    f"**Type:** {exploit_type}\n"
+                                    f"---")
+                    replies.append(detailed_info)
 
-                reply = (f"**Description:** {description}\n"
-                        f"**Source:** {source}\n"
-                        f"**Date:** {date}\n"
-                        f"**Type:** {exploit_type}")
-
-                await client.send_split_messages(interaction, reply)
+                message = "\n".join(replies)
+                await client.send_split_messages(interaction, message)
             else:
                 await interaction.followup.send("No exploits found for that term.")
+
         except shodan.APIError as e:
             try:
                 await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
@@ -362,42 +367,56 @@ def run_discord_bot(token, shodan_key):
                     await interaction.followup.send(f"Shodan API Error: {e}")
                 except Exception as followup_error:
                     logger.error(f"Failed to send followup: {followup_error}")
+
         except Exception as e:
             try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
+                await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
             except Exception:
                 try:
-                    await interaction.followup.send(f"Error: {e}")
+                    await interaction.followup.send(f"An error occurred: {e}")
                 except Exception as followup_error:
                     logger.error(f"Failed to send followup: {followup_error}")
 
-    @client.tree.command(name="listtags", description="List popular tags.")
+    @client.tree.command(
+        name="listtags", 
+        description="Get Shodan Exploits tags. Specify size (1-100). E.g., `/listtags 5`."
+    )
     async def listtags(interaction: discord.Interaction, size: int = 10):
         try:
-            # Ensure the size is within an acceptable range
             if not 1 <= size <= 100:
-                await interaction.response.send_message("Please provide a size between 1 and 100.", ephemeral=True)
+                await interaction.response.send_message(
+                    "The provided size is out of bounds. Please specify a value between 1 and 100.",
+                    ephemeral=True
+                )
                 return
 
             tags = client.shodan.exploits.tags(size=size)
             tag_list = ", ".join([tag['value'] for tag in tags['matches']])
-            await interaction.followup.send(f"Popular tags: {tag_list}")
+            await interaction.followup.send(f"Here are the top {size} popular exploit tags: {tag_list}")
+
         except shodan.APIError as e:
             try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
+                await interaction.response.send_message(
+                    f"Encountered a Shodan API error while fetching tags: {e}", 
+                    ephemeral=True
+                )
             except Exception:
                 try:
                     await interaction.followup.send(f"Shodan API Error: {e}")
                 except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+                    logger.error(f"Failed to send followup error message: {followup_error}")
+
         except Exception as e:
             try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
+                await interaction.response.send_message(
+                    f"An unexpected error occurred while processing the request: {e}", 
+                    ephemeral=True
+                )
             except Exception:
                 try:
                     await interaction.followup.send(f"Error: {e}")
                 except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+                    logger.error(f"Failed to send followup error message: {followup_error}")
 
     @client.tree.command(name="searchnetblock", description="Search devices in a specific netblock.")
     async def searchnetblock(interaction: discord.Interaction, netblock: str):
@@ -516,37 +535,57 @@ def run_discord_bot(token, shodan_key):
 
     @client.tree.command(name="help", description="Displays a list of available commands.")
     async def help_command(interaction: discord.Interaction):
-        # Create an Embed object for the help message
         embed = discord.Embed(title="Available Commands", description="Here are the commands you can use:", color=0x3498db)
         
-        # Manually add commands to the embed
-        commands = {
-            "/hostinfo": "Get information about a host.",
-            "/protocols": "List supported protocols.",
-            "/search": "Search Shodan.",
-            "/searchcity": "Search Shodan by city.",
-            "/searchorg": "Search Shodan by organization.",
-            "/searchport": "Search Shodan by port.",
-            "/searchcountry": "Search Shodan by country.",
-            "/exploitsearch": "Search for known vulnerabilities using a term.",
-            "/listtags": "List popular tags.",
-            "/searchnetblock": "Search devices in a specific netblock.",
-            "/searchproduct": "Search devices associated with a specific product.",
-            "/searchssl": "Search for domains associated with a specific SSL certificate hash.",
-            "/searchisp": "Search devices associated with a specific ISP.",
-            "/searchgeo": "Search devices around specific GPS coordinates."
-        }
+        # Basic Commands Header
+        embed.add_field(name="🟢 Basic Commands", value="Commands for common tasks.", inline=False)
         
-        for command, description in commands.items():
-            embed.add_field(name=command, value=description, inline=False)
+        basic_commands_description = "\n".join([
+            f"{command}: {description}" 
+            for command, description in {
+                "/hostinfo": "Get information about a host.",
+                "/protocols": "List supported protocols.",
+                "/searchcity": "Search Shodan by city.",
+                "/searchorg": "Search Shodan by organization.",
+                "/searchport": "Search Shodan by port.",
+                "/searchcountry": "Search Shodan by country.",
+                "/exploitsearch": "Search for known vulnerabilities using a term.",
+                "/listtags": "List popular tags.",
+                "/searchnetblock": "Search devices in a specific netblock.",
+                "/searchproduct": "Search devices associated with a specific product.",
+                "/searchssl": "Search for domains associated with a specific SSL certificate hash.",
+                "/searchisp": "Search devices associated with a specific ISP.",
+                "/searchgeo": "Search devices around specific GPS coordinates."
+            }.items()
+        ])
+        embed.add_field(name="Commands & Descriptions", value=basic_commands_description, inline=False)
         
-        # Send the embed as a response to the interaction
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        # Advanced Search Command Header
+        embed.add_field(name="🔴 Advanced Command", value="**Command**: \n`/search [query]`\nSearch Shodan with both basic and advanced query syntax.", inline=False)
+        
+        embed.add_field(name="Examples of Basic Searches", value=(
+            "- Single IP: `192.168.1.1`\n"
+            "- Domain: `example.com`\n"
+            "- Product/Service: `nginx`"
+        ), inline=False)
+        
+        embed.add_field(name="Examples of Advanced Queries", value=(
+            "- IP Range: `ip:18.9.47.0-18.9.47.255`\n"
+            "- Network: `net:18.9.47.0/24`\n"
+            "- SSL Cert Subject: `ssl.cert.subject.cn:stellar.mit.edu`\n"
+            "- Headers & HTML:\n"
+            "  - By Title: `http.title:\"Massachusetts Institute of Technology\"` - Searches for specific titles in HTTP responses.\n"
+            "  - By HTML Content: `http.html:'ua-1592615'` - Looks within the content of HTML pages.\n"
+            "- Webcams & IoT:\n"
+            "  - Webcam in ASN: `screenshot.label:webcam asn:AS45102`\n"
+            "  - With Screenshot: `has_screenshot:true`"
+        ), inline=False)
+        
+        await interaction.response.send_message(embed=embed, ephemeral=False)
 
     async def process_shodan_results(interaction: discord.Interaction, result: dict):
         matches = result.get('matches', [])
         if matches:
-            # Compose a message with more context about the results
             total = result.get('total', 0)
             info = f"Found {total} results. Here are the top results:\n\n"
             
