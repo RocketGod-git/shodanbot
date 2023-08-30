@@ -53,33 +53,57 @@ class aclient(discord.Client):
         self.activity = discord.Activity(type=discord.ActivityType.watching, name="the world")
         self.discord_message_limit = 2000
 
-    async def send_split_messages(self, interaction, message: str):
+    async def send_split_messages(self, interaction, message: str, require_response=True):
         """Sends a message, and if it's too long for Discord, splits it."""
         # Handle empty messages
         if not message.strip():
             logger.warning("Attempted to send an empty message.")
             return
 
-        try:
-            # Split message into manageable chunks
-            chunks = [message[i:i+self.discord_message_limit] for i in range(0, len(message), self.discord_message_limit)]
+        # Extract the user's query/command from the interaction to prepend it to the first chunk
+        query = interaction.data.get("options", [{}])[0].get("value", "")
+        prepend_text = ""
+        if query:
+            prepend_text = f"Query: {query}\n\n"
+                
+        # Add prepend_text to the message for splitting
+        message = prepend_text + message
+
+        # Split message into manageable chunks
+        chunks = [message[i:i+self.discord_message_limit] for i in range(0, len(message), self.discord_message_limit)]
             
-            # Send all chunks as follow-ups
-            for chunk in chunks:
-                try:
-                    await interaction.followup.send(chunk, ephemeral=False)
-                except Exception as e:
-                    logger.error(f"Failed to send a message chunk in follow-up. Error: {e}")
-        except Exception as e:
-            logger.error(f"Failed to send a message. Error: {e}")
+        # Check if there are chunks to send
+        if not chunks:
+            logger.warning("No chunks generated from the message.")
+            return
+
+        # If a response is required and the interaction hasn't been responded to, send the first chunk as a response
+        if require_response and not interaction.response.is_done():
+            try:
+                await interaction.response.send_message(chunks[0], ephemeral=False)
+                chunks = chunks[1:]  # remove the first chunk since we've already sent it
+            except Exception as e:
+                logger.error(f"Failed to send the first message chunk as response. Error: {e}")
+
+        # Send the chunks directly to the channel
+        for chunk in chunks:
+            try:
+                await interaction.channel.send(chunk)
+            except Exception as e:
+                logger.error(f"Failed to send a message chunk to the channel. Error: {e}")
 
 async def handle_errors(interaction, error, error_type="Error"):
+    error_message = f"{error_type}: {error}"
     try:
-        await interaction.response.send_message(f"{error_type}: {error}", ephemeral=True)
+        # Check if the interaction has been responded to
+        if interaction.response.is_done():
+            await interaction.followup.send(error_message)
+        else:
+            await interaction.response.send_message(error_message, ephemeral=True)
     except discord.HTTPException as http_err:
         logger.warning(f"HTTP error while responding to {interaction.user}: {http_err}")
         try:
-            await interaction.followup.send(f"{error_type}: {error}")
+            await interaction.followup.send(error_message)
         except discord.HTTPException as followup_http_err:
             logger.error(f"HTTP error during followup to {interaction.user}: {followup_http_err}")
         except Exception as unexpected_followup_error:
@@ -98,6 +122,7 @@ def run_discord_bot(token, shodan_key):
     async def on_ready():
         await client.tree.sync()
         logger.info(f'{client.user} is done sleeping. Lets go!')
+        await client.change_presence(activity=client.activity)
 
     @client.tree.command(name="hostinfo", description="Get information about a host.")
     async def hostinfo(interaction: discord.Interaction, host_ip: str):
@@ -132,31 +157,7 @@ def run_discord_bot(token, shodan_key):
         try:
             query = query.strip()  
             result = client.shodan.search(query)
-            matches = result.get('matches', [])
-
-            if matches:
-                reply = ""
-                for i, match in enumerate(matches[:5]): 
-                    ip = match.get('ip_str', 'Unknown IP')
-                    port = match.get('port', 'Unknown Port')
-                    org = match.get('org', 'Unknown Org')
-                    location = match.get('location', {}).get('country', 'Unknown Country')
-                    data = match.get('data', 'No data available.')
-                    product = match.get('product', 'Unknown Product')
-                    version = match.get('version', 'Unknown Version')
-                    os = match.get('os', 'Unknown OS')
-
-                    reply += f"Result {i+1}:\n"
-                    reply += f"IP: {ip}, Port: {port}\n"
-                    reply += f"Organization: {org}\n"
-                    reply += f"Location: {location}\n"
-                    reply += f"Product: {product}, Version: {version}, OS: {os}\n"
-                    reply += f"Data: {data}\n\n"
-
-                await client.send_split_messages(interaction, reply)
-            else:
-                await interaction.followup.send("No matches found for the given query.")
-
+            await process_shodan_results(interaction, result)
         except shodan.APIError as e:
             await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
@@ -164,95 +165,38 @@ def run_discord_bot(token, shodan_key):
 
     @client.tree.command(name="searchcity", description="Search Shodan by city.")
     async def searchcity(interaction: discord.Interaction, city: str):
-        city = city.strip()  
+        city = city.strip()
         
         try:
             result = client.shodan.search(f"city:\"{city}\"")
-            matches = result.get('matches', [])
-
-            if matches:
-                reply = ""
-                for i, match in enumerate(matches[:5]):  # Displaying first 5 matches here
-                    ip = match.get('ip_str', 'Unknown IP')
-                    port = match.get('port', 'Unknown Port')
-                    org = match.get('org', 'Unknown Org')
-                    location = match.get('location', {}).get('country', 'Unknown Country')
-                    data = match.get('data', 'No data available.').strip()  # Removing leading/trailing whitespace
-                    product = match.get('product', 'Unknown Product')
-                    version = match.get('version', 'Unknown Version')
-                    os = match.get('os', 'Unknown OS')
-
-                    reply += f"Result {i+1}:\n"
-                    reply += f"IP: {ip}, Port: {port}\n"
-                    reply += f"Organization: {org}\n"
-                    reply += f"Location: {location}\n"
-                    reply += f"Product: {product}, Version: {version}, OS: {os}\n"
-                    reply += f"Data: {data}\n\n"
-            else:
-                reply = f"No results for city: {city}"
-
-            await interaction.response.send_message(reply, ephemeral=False)
+            await process_shodan_results(interaction, result)
         except shodan.APIError as e:
             await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
             await handle_errors(interaction, e)
-            
+
     @client.tree.command(name="searchorg", description="Search Shodan by organization.")
     async def searchorg(interaction: discord.Interaction, organization: str):
         try:
             await interaction.response.defer(ephemeral=False)
-
             result = client.shodan.search(f"org:\"{organization}\"")
-            matches = result.get('matches', [])
-
-            if matches:
-                top_matches = matches[:5]
-                reply = "Top 5 Results:\n\n"
-
-                for match in top_matches:
-                    ip_str = match.get('ip_str', 'Unknown IP')
-                    port = match.get('port', 'Unknown Port')
-                    org = match.get('org', 'Unknown Organization')
-                    location = match.get('location', {})
-                    country_name = location.get('country_name', 'Unknown Country')
-                    city = location.get('city', 'Unknown City')
-                    data = match.get('data', 'No data available.')
-
-                    reply += (f"**IP:** {ip_str}\n"
-                            f"**Port:** {port}\n"
-                            f"**Organization:** {org}\n"
-                            f"**Country:** {country_name}\n"
-                            f"**City:** {city}\n\n"
-                            f"**Data:**\n{data}\n\n"
-                            f"{'-'*30}\n\n")
-
-                await interaction.followup.send(reply, ephemeral=True)
-
-            else:
-                await interaction.followup.send(f"No results for organization: {organization}", ephemeral=True)
+            await process_shodan_results(interaction, result)
         except shodan.APIError as e:
             await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
             await handle_errors(interaction, e)
-              
+
     @client.tree.command(name="searchport", description="Search Shodan by port.")
     async def searchport(interaction: discord.Interaction, port: int):
         try:
+            await interaction.response.defer(ephemeral=False)
             result = client.shodan.search(f"port:{port}")
-            matches = result.get('matches', [])
-            
-            if matches:
-                replies = [f"IP: {match['ip_str']} - Port: {port} - Data: {match.get('data', 'No data available.')}" for match in matches[:5]]
-                reply = "\n\n".join(replies)
-            else:
-                reply = f"No results for port: {port}"
-            
-            await client.send_split_messages(interaction, reply)
+            await process_shodan_results(interaction, result)
         except shodan.APIError as e:
             await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
             await handle_errors(interaction, e)
-            
+
     @client.tree.command(name="searchcountry", description="Search Shodan by country using a 2-letter country code (e.g., 'US' for the United States).")
     async def searchcountry(interaction: discord.Interaction, country_code: str):
         try:
@@ -265,34 +209,12 @@ def run_discord_bot(token, shodan_key):
                 return
 
             result = client.shodan.search(f"country:\"{country_code}\"")
-            matches = result.get('matches', [])
-            
-            if matches:
-                replies = []
-                for match in matches[:5]:
-                    ip = match.get('ip_str', 'Unknown IP')
-                    port = match.get('port', 'Unknown Port')
-                    org = match.get('org', 'N/A')
-                    city = match.get('location', {}).get('city', 'N/A')
-                    data = match.get('data', 'No data available.').strip()
-                    
-                    detailed_info = (f"**IP:** {ip}\n"
-                                    f"**Port:** {port}\n"
-                                    f"**Organization:** {org}\n"
-                                    f"**City:** {city}\n\n"
-                                    f"**Data:**\n{data}\n"
-                                    f"---")
-                    replies.append(detailed_info)
-
-                message = "\n".join(replies)
-                await client.send_split_messages(interaction, message)
-            else:
-                await interaction.followup.send(f"No results found for country code: {country_code}")
+            await process_shodan_results(interaction, result)
         except shodan.APIError as e:
             await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
             await handle_errors(interaction, e)
-            
+    
     @client.tree.command(name="exploitsearch", description="Search for known vulnerabilities using a term.")
     async def exploitsearch(interaction: discord.Interaction, term: str):
         try:
@@ -329,6 +251,9 @@ def run_discord_bot(token, shodan_key):
         description="Get Shodan Exploits tags. Specify size (1-100). E.g., `/listtags 5`."
     )
     async def listtags(interaction: discord.Interaction, size: int = 10):
+        """
+        Retrieves a list of popular exploit tags from Shodan based on a specified size.
+        """
         try:
             if not 1 <= size <= 100:
                 await interaction.response.send_message(
@@ -339,12 +264,21 @@ def run_discord_bot(token, shodan_key):
 
             tags = client.shodan.exploits.tags(size=size)
             tag_list = ", ".join([tag['value'] for tag in tags['matches']])
-            await interaction.followup.send(f"Here are the top {size} popular exploit tags: {tag_list}")
+            
+            # Improved message formatting for clarity
+            if not tag_list:
+                message = "No popular exploit tags found."
+            elif size == 1:
+                message = f"The most popular exploit tag is: {tag_list}"
+            else:
+                message = f"Here are the top {size} popular exploit tags: {tag_list}"
+
+            await interaction.followup.send(message)
         except shodan.APIError as e:
             await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
             await handle_errors(interaction, e)
-            
+
     @client.tree.command(name="searchnetblock", description="Search devices in a specific netblock.")
     async def searchnetblock(interaction: discord.Interaction, netblock: str):
         try:
