@@ -4,9 +4,26 @@ import discord
 from discord import Embed
 import shodan
 
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] - %(message)s')
-logger = logging.getLogger(__name__)
+# Reset logging configuration to clear any handlers
+logging.root.handlers = []
 
+# Define the logger and handler
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create console handler with a specific level
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+
+# Create formatter and add it to the handler
+formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] - %(message)s')
+ch.setFormatter(formatter)
+
+# Add the handler to the logger
+logger.addHandler(ch)
+
+# Mute the discord library's logs
+logging.getLogger('discord').setLevel(logging.CRITICAL)
 def load_config():
     try:
         with open('config.json', 'r') as file:
@@ -44,23 +61,35 @@ class aclient(discord.Client):
             return
 
         try:
-            if len(message) <= self.discord_message_limit:
-                await interaction.response.send_message(message, ephemeral=False)
-            else:
-                # Split message into manageable chunks
-                chunks = [message[i:i+self.discord_message_limit] for i in range(0, len(message), self.discord_message_limit)]
-                
-                # Respond to the initial interaction with the first chunk
-                await interaction.response.send_message(chunks[0], ephemeral=False)
-                
-                # Send the remaining chunks as follow-ups
-                for chunk in chunks[1:]:
-                    try:
-                        await interaction.followup.send(chunk)
-                    except Exception as e:
-                        logger.error(f"Failed to send a message chunk in follow-up. Error: {e}")
+            # Split message into manageable chunks
+            chunks = [message[i:i+self.discord_message_limit] for i in range(0, len(message), self.discord_message_limit)]
+            
+            # Send all chunks as follow-ups
+            for chunk in chunks:
+                try:
+                    await interaction.followup.send(chunk, ephemeral=False)
+                except Exception as e:
+                    logger.error(f"Failed to send a message chunk in follow-up. Error: {e}")
         except Exception as e:
             logger.error(f"Failed to send a message. Error: {e}")
+
+async def handle_errors(interaction, error, error_type="Error"):
+    try:
+        await interaction.response.send_message(f"{error_type}: {error}", ephemeral=True)
+    except discord.HTTPException as http_err:
+        logger.warning(f"HTTP error while responding to {interaction.user}: {http_err}")
+        try:
+            await interaction.followup.send(f"{error_type}: {error}")
+        except discord.HTTPException as followup_http_err:
+            logger.error(f"HTTP error during followup to {interaction.user}: {followup_http_err}")
+        except Exception as unexpected_followup_error:
+            logger.error(f"Unexpected error during followup to {interaction.user}: {unexpected_followup_error}")
+    except Exception as unexpected_err:
+        logger.error(f"Unexpected error while responding to {interaction.user}: {unexpected_err}")
+        try:
+            await interaction.followup.send("An unexpected error occurred. Please try again later.")
+        except Exception as followup_error:
+            logger.error(f"Failed to send followup: {followup_error}")
 
 def run_discord_bot(token, shodan_key):
     client = aclient(shodan_key)
@@ -76,21 +105,9 @@ def run_discord_bot(token, shodan_key):
             host_info = client.shodan.host(host_ip)
             await client.send_split_messages(interaction, f"IP: {host_info['ip_str']}\nOS: {host_info.get('os', 'Unknown')}")
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e)
 
     @client.tree.command(name="protocols", description="List supported protocols.")
     async def protocols(interaction: discord.Interaction):
@@ -99,29 +116,19 @@ def run_discord_bot(token, shodan_key):
             formatted_protocols = "\n".join([f"- {protocol}" for protocol in protocol_list])
 
             await client.send_split_messages(interaction, formatted_protocols)
-
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-
+            await handle_errors(interaction, e)
+            
     @client.tree.command(
         name="search",
         description="Advanced and basic Shodan queries. Use `/help search` for examples."
     )
     async def search(interaction: discord.Interaction, query: str):
+        # Acknowledge the interaction immediately
+        await interaction.response.defer(ephemeral=False)
+        
         try:
             query = query.strip()  
             result = client.shodan.search(query)
@@ -145,21 +152,15 @@ def run_discord_bot(token, shodan_key):
                     reply += f"Location: {location}\n"
                     reply += f"Product: {product}, Version: {version}, OS: {os}\n"
                     reply += f"Data: {data}\n\n"
-            else:
-                reply = "No matches found for the given query."
 
-            await client.send_split_messages(interaction, reply)
+                await client.send_split_messages(interaction, reply)
+            else:
+                await interaction.followup.send("No matches found for the given query.")
 
         except shodan.APIError as e:
-            await interaction.response.send_message(
-                f"Shodan API Error: {e}\nEnsure your query follows the described syntax, both basic and advanced.", 
-                ephemeral=True
-            )
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            await interaction.response.send_message(
-                f"General Error: {e}\nIf this persists, please check your bot's setup or contact support.", 
-                ephemeral=True
-            )
+            await handle_errors(interaction, e)
 
     @client.tree.command(name="searchcity", description="Search Shodan by city.")
     async def searchcity(interaction: discord.Interaction, city: str):
@@ -191,24 +192,11 @@ def run_discord_bot(token, shodan_key):
                 reply = f"No results for city: {city}"
 
             await interaction.response.send_message(reply, ephemeral=False)
-
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-
+            await handle_errors(interaction, e)
+            
     @client.tree.command(name="searchorg", description="Search Shodan by organization.")
     async def searchorg(interaction: discord.Interaction, organization: str):
         try:
@@ -242,13 +230,11 @@ def run_discord_bot(token, shodan_key):
 
             else:
                 await interaction.followup.send(f"No results for organization: {organization}", ephemeral=True)
-
         except shodan.APIError as e:
-            await interaction.followup.send(f"Shodan API Error: {e}", ephemeral=True)
-
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
-
+            await handle_errors(interaction, e)
+              
     @client.tree.command(name="searchport", description="Search Shodan by port.")
     async def searchport(interaction: discord.Interaction, port: int):
         try:
@@ -263,22 +249,10 @@ def run_discord_bot(token, shodan_key):
             
             await client.send_split_messages(interaction, reply)
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-
+            await handle_errors(interaction, e)
+            
     @client.tree.command(name="searchcountry", description="Search Shodan by country using a 2-letter country code (e.g., 'US' for the United States).")
     async def searchcountry(interaction: discord.Interaction, country_code: str):
         try:
@@ -314,24 +288,11 @@ def run_discord_bot(token, shodan_key):
                 await client.send_split_messages(interaction, message)
             else:
                 await interaction.followup.send(f"No results found for country code: {country_code}")
-
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-
+            await handle_errors(interaction, e)
+            
     @client.tree.command(name="exploitsearch", description="Search for known vulnerabilities using a term.")
     async def exploitsearch(interaction: discord.Interaction, term: str):
         try:
@@ -358,25 +319,11 @@ def run_discord_bot(token, shodan_key):
                 await client.send_split_messages(interaction, message)
             else:
                 await interaction.followup.send("No exploits found for that term.")
-
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"An error occurred: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-
+            await handle_errors(interaction, e)
+            
     @client.tree.command(
         name="listtags", 
         description="Get Shodan Exploits tags. Specify size (1-100). E.g., `/listtags 5`."
@@ -393,119 +340,51 @@ def run_discord_bot(token, shodan_key):
             tags = client.shodan.exploits.tags(size=size)
             tag_list = ", ".join([tag['value'] for tag in tags['matches']])
             await interaction.followup.send(f"Here are the top {size} popular exploit tags: {tag_list}")
-
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(
-                    f"Encountered a Shodan API error while fetching tags: {e}", 
-                    ephemeral=True
-                )
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup error message: {followup_error}")
-
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(
-                    f"An unexpected error occurred while processing the request: {e}", 
-                    ephemeral=True
-                )
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup error message: {followup_error}")
-
+            await handle_errors(interaction, e)
+            
     @client.tree.command(name="searchnetblock", description="Search devices in a specific netblock.")
     async def searchnetblock(interaction: discord.Interaction, netblock: str):
         try:
             result = client.shodan.search(f"net:{netblock}")
             await process_shodan_results(interaction, result)
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-                    
+            await handle_errors(interaction, e)
+                       
     @client.tree.command(name="searchproduct", description="Search devices associated with a specific product.")
     async def searchproduct(interaction: discord.Interaction, product: str):
         try:
             result = client.shodan.search(f"product:{product}")
             await process_shodan_results(interaction, result)
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-
+            await handle_errors(interaction, e)
+            
     @client.tree.command(name="searchssl", description="Search for domains associated with a specific SSL certificate hash.")
     async def searchssl(interaction: discord.Interaction, ssl_hash: str):
         try:
             result = client.shodan.search(f"ssl.cert.fingerprint:{ssl_hash}")
             await process_shodan_results(interaction, result)
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-
+            await handle_errors(interaction, e)
+            
     @client.tree.command(name="searchisp", description="Search devices associated with a specific ISP.")
     async def searchisp(interaction: discord.Interaction, isp: str):
         try:
             result = client.shodan.search(f"isp:\"{isp}\"")
             await process_shodan_results(interaction, result)
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-
+            await handle_errors(interaction, e)
+            
     @client.tree.command(name="searchgeo", description="Search devices around specific GPS coordinates.")
     async def searchgeo(interaction: discord.Interaction, latitude: float, longitude: float, radius: int = 10):
         try:
@@ -515,24 +394,11 @@ def run_discord_bot(token, shodan_key):
                 return
             
             await process_shodan_results(interaction, result)
-            
         except shodan.APIError as e:
-            try:
-                await interaction.response.send_message(f"Shodan API Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Shodan API Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
+            await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            except Exception:
-                try:
-                    await interaction.followup.send(f"Error: {e}")
-                except Exception as followup_error:
-                    logger.error(f"Failed to send followup: {followup_error}")
-
+            await handle_errors(interaction, e)
+            
     @client.tree.command(name="help", description="Displays a list of available commands.")
     async def help_command(interaction: discord.Interaction):
         embed = discord.Embed(title="Available Commands", description="Here are the commands you can use:", color=0x3498db)
