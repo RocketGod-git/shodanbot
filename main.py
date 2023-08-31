@@ -65,27 +65,30 @@ class aclient(discord.Client):
         prepend_text = ""
         if query:
             prepend_text = f"Query: {query}\n\n"
-                
+                    
         # Add prepend_text to the message for splitting
         message = prepend_text + message
 
         # Split message into manageable chunks
         chunks = [message[i:i+self.discord_message_limit] for i in range(0, len(message), self.discord_message_limit)]
-            
+                
         # Check if there are chunks to send
         if not chunks:
             logger.warning("No chunks generated from the message.")
             return
 
-        # If a response is required and the interaction hasn't been responded to, send the first chunk as a response
+        # If a response is required and the interaction hasn't been responded to, defer the response
         if require_response and not interaction.response.is_done():
-            try:
-                await interaction.response.send_message(chunks[0], ephemeral=False)
-                chunks = chunks[1:]  # remove the first chunk since we've already sent it
-            except Exception as e:
-                logger.error(f"Failed to send the first message chunk as response. Error: {e}")
+            await interaction.response.defer(ephemeral=False)
 
-        # Send the chunks directly to the channel
+        # Edit the deferred response
+        try:
+            await interaction.followup.send(content=chunks[0], ephemeral=False)
+            chunks = chunks[1:]  # Remove the first chunk since we've already sent it
+        except Exception as e:
+            logger.error(f"Failed to send the first chunk via followup. Error: {e}")
+
+        # Send the rest of the chunks directly to the channel
         for chunk in chunks:
             try:
                 await interaction.channel.send(chunk)
