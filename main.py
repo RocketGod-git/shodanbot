@@ -153,14 +153,18 @@ def run_discord_bot(token, shodan_key):
         name="search",
         description="Advanced and basic Shodan queries. Use `/help search` for examples."
     )
-    async def search(interaction: discord.Interaction, query: str):
-        # Acknowledge the interaction immediately
+    async def search(interaction: discord.Interaction, query: str, max_results: int = 10, display_mode: str = "full"):
+        """
+        :param query: The Shodan query.
+        :param max_results: The maximum number of results to display. Defaults to 10.
+        :param display_mode: Either "full" for full details or "easy" for list of IP:ports. Defaults to "full".
+        """
         await interaction.response.defer(ephemeral=False)
         
         try:
             query = query.strip()  
             result = client.shodan.search(query)
-            await process_shodan_results(interaction, result)
+            await process_shodan_results(interaction, result, max_results, display_mode)
         except shodan.APIError as e:
             await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
@@ -364,7 +368,7 @@ def run_discord_bot(token, shodan_key):
         embed.add_field(name="Commands & Descriptions", value=basic_commands_description, inline=False)
         
         # Advanced Search Command Header
-        embed.add_field(name="🔴 Advanced Command", value="**Command**: \n`/search [query]`\nSearch Shodan with both basic and advanced query syntax.", inline=False)
+        embed.add_field(name="🔴 Advanced Command", value="**Command**: \n`/search [query]`\nSearch Shodan. Click the options for max results and easy mode.", inline=False)
         
         embed.add_field(name="Examples of Basic Searches", value=(
             "- Single IP: `192.168.1.1`\n"
@@ -380,41 +384,59 @@ def run_discord_bot(token, shodan_key):
             "  - By Title: `http.title:\"Massachusetts Institute of Technology\"` - Searches for specific titles in HTTP responses.\n"
             "  - By HTML Content: `http.html:'ua-1592615'` - Looks within the content of HTML pages.\n"
             "- Webcams & IoT:\n"
+            "  - Search for vulnerable cams like `wyze`, `webcamxp 5`, or more specific like:\n"
+            "  -    \"`Server:yawcam\" \"Mime-Type:text/html`\"\n"
             "  - Webcam in ASN: `screenshot.label:webcam asn:AS45102`\n"
             "  - With Screenshot: `has_screenshot:true`"
         ), inline=False)
         
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
-    async def process_shodan_results(interaction: discord.Interaction, result: dict):
+    async def process_shodan_results(interaction: discord.Interaction, result: dict, max_results: int, display_mode: str):
         matches = result.get('matches', [])
         if matches:
             total = result.get('total', 0)
             info = f"Found {total} results. Here are the top results:\n\n"
             
             responses = []
-            for match in matches[:5]:  # Limiting to top 5 matches
-                data = match.get('data', 'No data available.').strip()
+
+            for match in matches[:max_results]:  
                 ip = match.get('ip_str', 'No IP available.')
                 port = match.get('port', 'No port available.')
-                org = match.get('org', 'N/A')
-                location = f"{match.get('location', {}).get('country_name', 'N/A')} - {match.get('location', {}).get('city', 'N/A')}"
-                product = match.get('product', 'N/A')
-                version = match.get('version', 'N/A')
-                
-                detailed_info = (f"**IP:** {ip}\n"
-                                f"**Port:** {port}\n"
-                                f"**Organization:** {org}\n"
-                                f"**Location:** {location}\n"
-                                f"**Product:** {product} {version}\n"
-                                f"**Data:** {data}\n"
-                                f"---")
+
+                # If display mode is easy
+                if display_mode == "easy":
+                    clickable_link = f"[{ip}:{port}](http://{ip}:{port})"
+                    responses.append(clickable_link)
+                    continue 
+
+                # If display mode is full
+                detailed_info = generate_detailed_info(match)
                 responses.append(detailed_info)
             
             message = info + "\n".join(responses)
             await client.send_split_messages(interaction, message)
         else:
             await interaction.followup.send("No results found.")
+
+    def generate_detailed_info(match: dict) -> str:
+        ip = match.get('ip_str', 'No IP available.')
+        port = match.get('port', 'No port available.')
+        org = match.get('org', 'N/A')
+        location = f"{match.get('location', {}).get('country_name', 'N/A')} - {match.get('location', {}).get('city', 'N/A')}"
+        product = match.get('product', 'N/A')
+        version = match.get('version', 'N/A')
+        data = match.get('data', 'No data available.').strip()
+
+        main_link = f"http://{ip}:{port}"
+        detailed_info = (f"**IP:** [{ip}]({main_link})\n"
+                        f"**Port:** {port}\n"
+                        f"**Organization:** {org}\n"
+                        f"**Location:** {location}\n"
+                        f"**Product:** {product} {version}\n"
+                        f"**Data:** {data}\n"
+                        f"---")
+        return detailed_info
 
     client.run(token)
 
