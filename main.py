@@ -425,9 +425,15 @@ def run_discord_bot(token, shodan_key):
                 ip = match.get('ip_str', 'No IP available.')
                 port = match.get('port', 'No port available.')
 
+                # Extract geolocation details for easy mode
+                lat = match.get('location', {}).get('latitude')
+                long = match.get('location', {}).get('longitude')
+                google_maps_link = f"https://www.google.com/maps?q={lat},{long}" if lat and long else None
+                geolocation_text = f"found at [{lat},{long}]({google_maps_link})" if google_maps_link else ""
+
                 # If display mode is easy
                 if display_mode == "easy":
-                    clickable_link = f"[{ip}:{port}](http://{ip}:{port})"
+                    clickable_link = f"[{ip}:{port}](http://{ip}:{port}) {geolocation_text}"
                     responses.append(clickable_link)
                     continue 
 
