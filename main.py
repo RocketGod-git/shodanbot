@@ -61,17 +61,34 @@ class aclient(discord.Client):
             return
 
         # Extract the user's query/command from the interaction to prepend it to the first chunk
-        query = interaction.data.get("options", [{}])[0].get("value", "")
+        query = ""
+        for option in interaction.data.get("options", []):
+            if option.get("name") == "query":
+                query = option.get("value", "")
+                break
+
         prepend_text = ""
         if query:
             prepend_text = f"Query: {query}\n\n"
-                    
-        # Add prepend_text to the message for splitting
+                        
+        # Add prepend_text to the message
         message = prepend_text + message
 
-        # Split message into manageable chunks
-        chunks = [message[i:i+self.discord_message_limit] for i in range(0, len(message), self.discord_message_limit)]
-                
+        lines = message.split("\n")
+        chunks = []
+        current_chunk = ""
+
+        for line in lines:
+            # If adding the next line to the current chunk would exceed the Discord message limit
+            if len(current_chunk) + len(line) + 1 > self.discord_message_limit:
+                chunks.append(current_chunk)
+                current_chunk = line + "\n"
+            else:
+                current_chunk += line + "\n"
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
         # Check if there are chunks to send
         if not chunks:
             logger.warning("No chunks generated from the message.")
@@ -392,7 +409,7 @@ def run_discord_bot(token, shodan_key):
         
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
-    async def process_shodan_results(interaction: discord.Interaction, result: dict, max_results: int, display_mode: str):
+    async def process_shodan_results(interaction: discord.Interaction, result: dict, max_results: int = 10, display_mode: str = "full"):
         matches = result.get('matches', [])
         if matches:
             total = result.get('total', 0)
@@ -417,7 +434,19 @@ def run_discord_bot(token, shodan_key):
             message = info + "\n".join(responses)
             await client.send_split_messages(interaction, message)
         else:
-            await interaction.followup.send("No results found.")
+            # Extract the user's query from the interaction
+            query = ""
+            for option in interaction.data.get("options", []):
+                if option.get("name") == "query":
+                    query = option.get("value", "")
+                    break
+
+            # If the query is not empty, include it in the response message
+            response_message = "No results found."
+            if query:
+                response_message = f"No results found for the query: `{query}`."
+
+            await interaction.followup.send(response_message)
 
     def generate_detailed_info(match: dict) -> str:
         ip = match.get('ip_str', 'No IP available.')
@@ -427,13 +456,33 @@ def run_discord_bot(token, shodan_key):
         product = match.get('product', 'N/A')
         version = match.get('version', 'N/A')
         data = match.get('data', 'No data available.').strip()
-
+        asn = match.get('asn', 'N/A')
+        hostnames = ", ".join(match.get('hostnames', [])) or 'N/A'
+        os = match.get('os', 'N/A')
+        timestamp = match.get('timestamp', 'N/A')
+        isp = match.get('isp', 'N/A')
+        http_title = match.get('http', {}).get('title', 'N/A')
+        ssl_data = match.get('ssl', {}).get('cert', {}).get('subject', {}).get('CN', 'N/A')
+        vulns = ", ".join(match.get('vulns', [])) or 'N/A'
+        tags = ", ".join(match.get('tags', [])) or 'N/A'
+        transport = match.get('transport', 'N/A')
+        
         main_link = f"http://{ip}:{port}"
         detailed_info = (f"**IP:** [{ip}]({main_link})\n"
                         f"**Port:** {port}\n"
+                        f"**Transport:** {transport}\n"
                         f"**Organization:** {org}\n"
                         f"**Location:** {location}\n"
                         f"**Product:** {product} {version}\n"
+                        f"**ASN:** {asn}\n"
+                        f"**Hostnames:** {hostnames}\n"
+                        f"**OS:** {os}\n"
+                        f"**ISP:** {isp}\n"
+                        f"**HTTP Title:** {http_title}\n"
+                        f"**SSL Common Name:** {ssl_data}\n"
+                        f"**Tags:** {tags}\n"
+                        f"**Vulnerabilities:** {vulns}\n"
+                        f"**Timestamp:** {timestamp}\n"
                         f"**Data:** {data}\n"
                         f"---")
         return detailed_info
