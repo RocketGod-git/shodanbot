@@ -1,5 +1,6 @@
 import json
 import logging
+from ipaddress import ip_address
 import discord
 from discord import Embed
 import shodan
@@ -45,6 +46,13 @@ def check_configurations(config):
 
     return True
 
+def is_ipv6(addr: str) -> bool:
+    """Checks if the given address is an IPv6 address."""
+    try:
+        return ip_address(addr).version == 6
+    except ValueError:
+        return False
+
 class aclient(discord.Client):
     def __init__(self, shodan_key) -> None:
         super().__init__(intents=discord.Intents.default())
@@ -70,13 +78,14 @@ class aclient(discord.Client):
         prepend_text = ""
         if query:
             prepend_text = f"Query: {query}\n\n"
-                        
-        # Add prepend_text to the message
-        message = prepend_text + message
 
         lines = message.split("\n")
         chunks = []
         current_chunk = ""
+
+        # First, add the prepend_text (if any) to the initial chunk
+        if prepend_text:
+            current_chunk += prepend_text
 
         for line in lines:
             # If adding the next line to the current chunk would exceed the Discord message limit
@@ -414,6 +423,13 @@ def run_discord_bot(token, shodan_key):
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
     async def process_shodan_results(interaction: discord.Interaction, result: dict, max_results: int = 10, display_mode: str = "full"):
+        user = interaction.user.name
+        guild_name = interaction.guild.name if interaction.guild else "Direct Message"
+        command_name = interaction.data.get("name", "unknown_command")
+        options = ", ".join([f"{option.get('name')}: {option.get('value')}" for option in interaction.data.get("options", [])])
+
+        print(f"{user} executed /{command_name} from {guild_name}. Options used: {options}")
+
         matches = result.get('matches', [])
         if matches:
             total = result.get('total', 0)
@@ -433,7 +449,11 @@ def run_discord_bot(token, shodan_key):
 
                 # If display mode is easy
                 if display_mode == "easy":
-                    clickable_link = f"[{ip}:{port}](http://{ip}:{port}) {geolocation_text}"
+                    # Check if IP is IPv6
+                    if is_ipv6(ip):
+                        clickable_link = f"{ip} (port: {port}) {geolocation_text}"  # Modify this display as required
+                    else:
+                        clickable_link = f"[{ip}:{port}](http://{ip}:{port}) {geolocation_text}"
                     responses.append(clickable_link)
                     continue 
 
