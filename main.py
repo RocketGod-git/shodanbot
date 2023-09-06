@@ -345,10 +345,14 @@ def run_discord_bot(token, shodan_key):
             
     @client.tree.command(name="searchgeo", description="Search devices around specific GPS coordinates.")
     async def searchgeo(interaction: discord.Interaction, latitude: float, longitude: float, radius: int = 10):
+        await interaction.response.defer(ephemeral=True)
+        
         try:
             result = client.shodan.search(f"geo:{latitude},{longitude},{radius}")
             if not result.get('matches', []):
-                await interaction.response.send_message("No devices found in the specified region.", ephemeral=True)
+                no_results_message = (f"No devices found around the coordinates "
+                                    f"Latitude: {latitude}, Longitude: {longitude} within a radius of {radius} km.")
+                await interaction.followup.send(content=no_results_message)
                 return
             
             await process_shodan_results(interaction, result)
@@ -356,7 +360,7 @@ def run_discord_bot(token, shodan_key):
             await handle_errors(interaction, e, "Shodan API Error")
         except Exception as e:
             await handle_errors(interaction, e)
-            
+
     @client.tree.command(name="help", description="Displays a list of available commands.")
     async def help_command(interaction: discord.Interaction):
         embed = discord.Embed(title="Available Commands", description="Here are the commands you can use:", color=0x3498db)
@@ -452,7 +456,6 @@ def run_discord_bot(token, shodan_key):
         ip = match.get('ip_str', 'No IP available.')
         port = match.get('port', 'No port available.')
         org = match.get('org', 'N/A')
-        location = f"{match.get('location', {}).get('country_name', 'N/A')} - {match.get('location', {}).get('city', 'N/A')}"
         product = match.get('product', 'N/A')
         version = match.get('version', 'N/A')
         data = match.get('data', 'No data available.').strip()
@@ -466,25 +469,40 @@ def run_discord_bot(token, shodan_key):
         vulns = ", ".join(match.get('vulns', [])) or 'N/A'
         tags = ", ".join(match.get('tags', [])) or 'N/A'
         transport = match.get('transport', 'N/A')
-        
+
+        # Location details with Google Maps link
+        lat = match.get('location', {}).get('latitude')
+        long = match.get('location', {}).get('longitude')
+        google_maps_link = f"https://www.google.com/maps?q={lat},{long}" if lat and long else None
+        country = match.get('location', {}).get('country_name', 'N/A')
+        city = match.get('location', {}).get('city', 'N/A')
+        if google_maps_link:
+            location = f"{country} - {city} ([Lat: {lat}, Long: {long}]({google_maps_link}))"
+        else:
+            location = f"{country} - {city} (Lat: {lat}, Long: {long})"
+
         main_link = f"http://{ip}:{port}"
-        detailed_info = (f"**IP:** [{ip}]({main_link})\n"
-                        f"**Port:** {port}\n"
-                        f"**Transport:** {transport}\n"
-                        f"**Organization:** {org}\n"
-                        f"**Location:** {location}\n"
-                        f"**Product:** {product} {version}\n"
-                        f"**ASN:** {asn}\n"
-                        f"**Hostnames:** {hostnames}\n"
-                        f"**OS:** {os}\n"
-                        f"**ISP:** {isp}\n"
-                        f"**HTTP Title:** {http_title}\n"
-                        f"**SSL Common Name:** {ssl_data}\n"
-                        f"**Tags:** {tags}\n"
-                        f"**Vulnerabilities:** {vulns}\n"
-                        f"**Timestamp:** {timestamp}\n"
-                        f"**Data:** {data}\n"
-                        f"---")
+
+        detailed_info = (
+            f"**IP:** [{ip}]({main_link})\n"
+            f"**Port:** {port}\n"
+            f"**Transport:** {transport}\n"
+            f"**Organization:** {org}\n"
+            f"**Location:** {location}\n"
+            f"**Product:** {product} {version}\n"
+            f"**ASN:** {asn}\n"
+            f"**Hostnames:** {hostnames}\n"
+            f"**OS:** {os}\n"
+            f"**ISP:** {isp}\n"
+            f"**HTTP Title:** {http_title}\n"
+            f"**SSL Common Name:** {ssl_data}\n"
+            f"**Tags:** {tags}\n"
+            f"**Vulnerabilities:** {vulns}\n"
+            f"**Timestamp:** {timestamp}\n"
+            f"**Data:** {data}\n"
+            f"---"
+        )
+
         return detailed_info
 
     client.run(token)
