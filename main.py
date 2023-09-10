@@ -445,7 +445,7 @@ def run_discord_bot(token, shodan_key):
                 lat = match.get('location', {}).get('latitude')
                 long = match.get('location', {}).get('longitude')
                 google_maps_link = f"https://www.google.com/maps?q={lat},{long}" if lat and long else None
-                geolocation_text = f"found at [{lat},{long}]({google_maps_link})" if google_maps_link else ""
+                geolocation_text = f"([map](<{google_maps_link}>))" if google_maps_link else ""
 
                 # If display mode is easy
                 if display_mode == "easy":
