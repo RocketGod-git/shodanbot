@@ -1,3 +1,14 @@
+# __________                  __             __     ________             .___ 
+# \______   \  ____    ____  |  | __  ____ _/  |_  /  _____/   ____    __| _/ 
+#  |       _/ /  _ \ _/ ___\ |  |/ /_/ __ \\   __\/   \  ___  /  _ \  / __ |  
+#  |    |   \(  <_> )\  \___ |    < \  ___/ |  |  \    \_\  \(  <_> )/ /_/ |  
+#  |____|_  / \____/  \___  >|__|_ \ \___  >|__|   \______  / \____/ \____ |  
+#         \/              \/      \/     \/               \/              \/  
+#
+# Shodan Discord Bot by RocketGod
+#
+# https://github.com/RocketGod-git/shodanbot
+
 import json
 import logging
 from ipaddress import ip_address
