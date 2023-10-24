@@ -69,7 +69,7 @@ class aclient(discord.Client):
         super().__init__(intents=discord.Intents.default())
         self.shodan = shodan.Shodan(shodan_key)
         self.tree = discord.app_commands.CommandTree(self)
-        self.activity = discord.Activity(type=discord.ActivityType.watching, name="the world")
+        self.activity = discord.Activity(type=discord.ActivityType.watching, name="/search")
         self.discord_message_limit = 2000
 
     async def send_split_messages(self, interaction, message: str, require_response=True):
